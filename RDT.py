@@ -7,7 +7,7 @@ import hashlib
 class Packet:
     ## the number of bytes used to store packet length
     seq_num_S_length = 10
-    length_S_length = 10
+    length_S_length = 8
     type_length = 2
     ## length of md5 checksum in hex
     checksum_length = 32
@@ -75,9 +75,7 @@ class RDT:
     ## latest sequence number used in a packet
     seq_num = 1
     ## buffer of bytes read from network
-    byte_buffer = '' 
-    ## role -- client/server
-    role = ''
+    byte_buffer = ''
 
     def __init__(self, role_S, server_S, port):
         self.role = role_S
@@ -131,7 +129,7 @@ class RDT:
             if(len(self.byte_buffer) < Packet.length_S_length):
                 return ret_S #not enough bytes to read packet length
             #extract length of packet
-            length = int(self.byte_buffer[:Packet.length_S_length])
+            length = int(self.byte_buffer[Packet.type_length:Packet.length_S_length])
             if len(self.byte_buffer) < length:
                 return ret_S #not enough bytes to read the whole packet
     #        if (self.seq_num is not loc_seq_num):      #duplicate if wrong sequence number
