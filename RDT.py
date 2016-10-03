@@ -7,11 +7,9 @@ import hashlib
 class Packet:
     ## the number of bytes used to store packet length
     seq_num_S_length = 10
-    length_S_length = 8
-    type_length = 2
+    length_S_length = 10
     ## length of md5 checksum in hex
     checksum_length = 32
-    ack_nak = '00'
         
     def __init__(self, seq_num, msg_S):
         self.seq_num = seq_num
@@ -19,25 +17,24 @@ class Packet:
         
     @classmethod
     def from_byte_S(self, byte_S):
-#        if Packet.corrupt(byte_S):
-#            raise RuntimeError('Cannot initialize Packet: byte_S is corrupt')
+        if Packet.corrupt(byte_S):
+            raise RuntimeError('Cannot initialize Packet: byte_S is corrupt')
         #extract the fields
-        seq_num = int(byte_S[Packet.length_S_length + Packet.type_length : Packet.type_length+Packet.length_S_length+Packet.seq_num_S_length])
-        ack_nak = int(byte_S[:Packet.type_length])    #get whether ack or nak
-        msg_S = byte_S[Packet.type_length+Packet.length_S_length+Packet.seq_num_S_length+Packet.checksum_length :]
-        return self(seq_num, msg_S, ack_nak)
+        seq_num = int(byte_S[Packet.length_S_length : Packet.length_S_length+Packet.seq_num_S_length])
+        msg_S = byte_S[Packet.length_S_length+Packet.seq_num_S_length+Packet.checksum_length :]
+        return self(seq_num, msg_S)
         
         
     def get_byte_S(self):
         #convert sequence number of a byte field of seq_num_S_length bytes
         seq_num_S = str(self.seq_num).zfill(self.seq_num_S_length)
         #convert length to a byte field of length_S_length bytes
-        length_S = str(self.type_length + self.length_S_length + len(seq_num_S) + self.checksum_length + len(self.msg_S)).zfill(self.length_S_length)
+        length_S = str(self.length_S_length + len(seq_num_S) + self.checksum_length + len(self.msg_S)).zfill(self.length_S_length)
         #compute the checksum
         checksum = hashlib.md5((length_S+seq_num_S+self.msg_S).encode('utf-8'))
         checksum_S = checksum.hexdigest()
         #compile into a string
-        return self.ack_nak + seq_num_S + checksum_S + self.msg_S
+        return length_S + seq_num_S + checksum_S + self.msg_S
     
     @staticmethod
     def corrupt(byte_S):
@@ -55,10 +52,34 @@ class Packet:
 
 class PacketRDT21(Packet):
      last_packet = ''
+     type_length = 2
+     length_S_length = 8
+
 
      def __init__(self, seq_num, msg_S, ack_nak):
         Packet.__init__(self, seq_num, msg_S)
         self.ack_nak = ack_nak
+
+     @classmethod
+     def from_byte_S(self, byte_S):
+#        if Packet.corrupt(byte_S):
+#            raise RuntimeError('Cannot initialize Packet: byte_S is corrupt')
+        #extract the fields
+        seq_num = int(byte_S[PacketRDT21.length_S_length + PacketRDT21.type_length : PacketRDT21.type_length+PacketRDT21.length_S_length+PacketRDT21.seq_num_S_length])
+        ack_nak = int(byte_S[:PacketRDT21.type_length])    #get whether ack or nak
+        msg_S = byte_S[PacketRDT21.type_length+PacketRDT21.length_S_length+Packet.seq_num_S_length+Packet.checksum_length :]
+        return self(seq_num, msg_S, ack_nak)
+
+     def get_byte_S(self):
+        #convert sequence number of a byte field of seq_num_S_length bytes
+        seq_num_S = str(self.seq_num).zfill(self.seq_num_S_length)
+        #convert length to a byte field of length_S_length bytes
+        length_S = str(self.type_length + self.length_S_length + len(seq_num_S) + self.checksum_length + len(self.msg_S)).zfill(self.length_S_length)
+        #compute the checksum
+        checksum = hashlib.md5((length_S+seq_num_S+self.msg_S).encode('utf-8'))
+        checksum_S = checksum.hexdigest()
+        #compile into a string
+        return self.ack_nak + length_S + seq_num_S + checksum_S + self.msg_S
 
      def is_ack(self, value):
         if(value is '10'):
@@ -126,15 +147,12 @@ class RDT:
         #keep extracting packets - if reordered, could get more than one
         while True:
             #check if we have received enough bytes
-            if(len(self.byte_buffer) < Packet.length_S_length):
+            if(len(self.byte_buffer) < PacketRDT21.length_S_length):
                 return ret_S #not enough bytes to read packet length
             #extract length of packet
-            length = int(self.byte_buffer[Packet.type_length:Packet.length_S_length])
+            length = int(self.byte_buffer[PacketRDT21.type_length:PacketRDT21.length_S_length])
             if len(self.byte_buffer) < length:
                 return ret_S #not enough bytes to read the whole packet
-    #        if (self.seq_num is not loc_seq_num):      #duplicate if wrong sequence number
-     #           return ret_S    #wait for next packet
-      #      loc_seq_num += 1        #next sequence number
             #create packet from buffer content and add to return string
             p = PacketRDT21.from_byte_S(self.byte_buffer[0:length])
             if(PacketRDT21.is_ack(p.ack_nak)):
@@ -168,16 +186,16 @@ if __name__ == '__main__':
     
     rdt = RDT(args.role, args.server, args.port)
     if args.role == 'client':
-        rdt.rdt_1_0_send('MSG_FROM_CLIENT')
+        rdt.rdt_2_1_send('MSG_FROM_CLIENT')
         sleep(2)
-        print(rdt.rdt_1_0_receive())
+        print(rdt.rdt_2_1_receive())
         rdt.disconnect()
         
         
     else:
         sleep(1)
-        print(rdt.rdt_1_0_receive())
-        rdt.rdt_1_0_send('MSG_FROM_SERVER')
+        print(rdt.rdt_2_1_receive())
+        rdt.rdt_2_1_send('MSG_FROM_SERVER')
         rdt.disconnect()
         
 
