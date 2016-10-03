@@ -11,7 +11,7 @@ class Packet:
     type_length = 2
     ## length of md5 checksum in hex
     checksum_length = 32
-    ack_nak = '00'
+    ack_nak = 00
         
     def __init__(self, seq_num, msg_S):
         self.seq_num = seq_num
@@ -30,25 +30,27 @@ class Packet:
         
     def get_byte_S(self):
         #convert sequence number of a byte field of seq_num_S_length bytes
+        type_S = str(self.ack_nak).zfill(self.type_length)
         seq_num_S = str(self.seq_num).zfill(self.seq_num_S_length)
         #convert length to a byte field of length_S_length bytes
-        length_S = str(self.type_length + self.length_S_length + len(seq_num_S) + self.checksum_length + len(self.msg_S)).zfill(self.length_S_length)
+        length_S = str(self.type_length + self.length_S_length + self.seq_num_S_length + self.checksum_length + len(self.msg_S)).zfill(self.length_S_length)
         #compute the checksum
-        checksum = hashlib.md5((length_S+seq_num_S+self.msg_S).encode('utf-8'))
+        checksum = hashlib.md5((type_S+length_S+seq_num_S+self.msg_S).encode('utf-8'))
         checksum_S = checksum.hexdigest()
         #compile into a string
-        return self.ack_nak + seq_num_S + checksum_S + self.msg_S
+        return type_S + length_S + seq_num_S + checksum_S + self.msg_S
     
     @staticmethod
     def corrupt(byte_S):
-        #extract the fields
-        length_S = byte_S[0:Packet.length_S_length]
-        seq_num_S = byte_S[Packet.length_S_length : Packet.seq_num_S_length+Packet.seq_num_S_length]
-        checksum_S = byte_S[Packet.seq_num_S_length+Packet.seq_num_S_length : Packet.seq_num_S_length+Packet.length_S_length+Packet.checksum_length]
-        msg_S = byte_S[Packet.seq_num_S_length+Packet.seq_num_S_length+Packet.checksum_length :]
+        #extract the fields\
+        type_S = byte_S[:Packet.type_length]
+        length_S = byte_S[Packet.type_length:Packet.type_length + Packet.length_S_length]
+        seq_num_S = byte_S[Packet.length_S_length + Packet.type_length : Packet.type_length + Packet.seq_num_S_length+Packet.seq_num_S_length]
+        checksum_S = byte_S[Packet.type_length + Packet.length_S_length+Packet.seq_num_S_length : Packet.type_length + Packet.seq_num_S_length+Packet.length_S_length+Packet.checksum_length]
+        msg_S = byte_S[Packet.type_length + Packet.length_S_length+Packet.seq_num_S_length+Packet.checksum_length :]
         
         #compute the checksum locally
-        checksum = hashlib.md5(str(length_S+seq_num_S+msg_S).encode('utf-8'))
+        checksum = hashlib.md5(str(type_S+length_S+seq_num_S+msg_S).encode('utf-8'))
         computed_checksum_S = checksum.hexdigest()
         #and check if the same
         return checksum_S != computed_checksum_S
@@ -60,13 +62,13 @@ class PacketRDT21(Packet):
         Packet.__init__(self, seq_num, msg_S)
         self.ack_nak = ack_nak
 
-     def is_ack(self, value):
-        if(value is '10'):
+     def is_ack(value):
+        if(value is 10):
             return True
         return False
 
-     def is_nak(self, value):
-        if(value is '11'):
+     def is_nak(value):
+        if(value is 11):
             return True
         return False
 
@@ -75,12 +77,9 @@ class RDT:
     ## latest sequence number used in a packet
     seq_num = 1
     ## buffer of bytes read from network
-    byte_buffer = '' 
-    ## role -- client/server
-    role = ''
+    byte_buffer = ''
 
     def __init__(self, role_S, server_S, port):
-        self.role = role_S
         self.network = Network.NetworkLayer(role_S, server_S, port)
     
     def disconnect(self):
@@ -111,7 +110,7 @@ class RDT:
             self.byte_buffer = self.byte_buffer[length:]
             #if this was the last packet, will return on the next iteration
     
-    def rdt_2_1_send(self, msg_S, ack_nak = '00'):
+    def rdt_2_1_send(self, msg_S, ack_nak = 00):
         p = PacketRDT21(self.seq_num, msg_S, ack_nak)
         self.last_packet = p
         self.seq_num += 1
@@ -131,7 +130,7 @@ class RDT:
             if(len(self.byte_buffer) < Packet.length_S_length):
                 return ret_S #not enough bytes to read packet length
             #extract length of packet
-            length = int(self.byte_buffer[:Packet.length_S_length])
+            length = int(self.byte_buffer[Packet.type_length:Packet.type_length+Packet.length_S_length])
             if len(self.byte_buffer) < length:
                 return ret_S #not enough bytes to read the whole packet
     #        if (self.seq_num is not loc_seq_num):      #duplicate if wrong sequence number
@@ -140,15 +139,15 @@ class RDT:
             #create packet from buffer content and add to return string
             p = PacketRDT21.from_byte_S(self.byte_buffer[0:length])
             if(PacketRDT21.is_ack(p.ack_nak)):
-                if(PacketRDT21.corrupt(byte_buffer)):
-                    self.rdt_2_1_resend(self)        # resend
-            if(PacketRDT21.is_nak(p.ack_nak)):   #if nak
-                self.rdt_2_1_resend(self)        # Maybe we should fix
+                if(PacketRDT21.corrupt(self.byte_buffer)):
+                    self.rdt_2_1_resend()        # resend
+            elif(PacketRDT21.is_nak(p.ack_nak)):   #if nak
+                self.rdt_2_1_resend()        # Maybe we should fix
             #check the checksum and send nak if corrupt
-            if(PacketRDT21.corrupt(byte_buffer)):
-                self.rdt_2_1_send(self, msg_S, '11')
-            else: #send ack if not corrupt
-                self.rdt_2_1_send(self, msg_S, '10')
+            elif(PacketRDT21.corrupt(self.byte_buffer)):
+                self.rdt_2_1_send(p.msg_S, 11)
+            elif(not PacketRDT21.is_ack(p.ack_nak)): #send ack if not corrupt
+                self.rdt_2_1_send(p.msg_S, 10)
             ret_S = p.msg_S if (ret_S is None) else ret_S + p.msg_S
             #remove the packet bytes from the buffer
             self.byte_buffer = self.byte_buffer[length:]
@@ -170,16 +169,16 @@ if __name__ == '__main__':
     
     rdt = RDT(args.role, args.server, args.port)
     if args.role == 'client':
-        rdt.rdt_1_0_send('MSG_FROM_CLIENT')
+        rdt.rdt_2_1_send('MSG_FROM_CLIENT')
         sleep(2)
-        print(rdt.rdt_1_0_receive())
+        print(rdt.rdt_2_1_receive())
         rdt.disconnect()
         
         
     else:
         sleep(1)
-        print(rdt.rdt_1_0_receive())
-        rdt.rdt_1_0_send('MSG_FROM_SERVER')
+        print(rdt.rdt_2_1_receive())
+        rdt.rdt_2_1_send('MSG_FROM_SERVER')
         rdt.disconnect()
         
 
