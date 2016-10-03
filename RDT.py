@@ -41,16 +41,32 @@ class Packet:
     def corrupt(byte_S):
         #extract the fields
         length_S = byte_S[0:Packet.length_S_length]
-        seq_num_S = byte_S[Packet.length_S_length : Packet.seq_num_S_length+Packet.seq_num_S_length]
-        checksum_S = byte_S[Packet.seq_num_S_length+Packet.seq_num_S_length : Packet.seq_num_S_length+Packet.length_S_length+Packet.checksum_length]
-        msg_S = byte_S[Packet.seq_num_S_length+Packet.seq_num_S_length+Packet.checksum_length :]
+        seq_num_S = byte_S[Packet.length_S_length : Packet.seq_num_S_length + Packet.seq_num_S_length]
+        checksum_S = byte_S[Packet.seq_num_S_length + Packet.seq_num_S_length : Packet.seq_num_S_length + Packet.length_S_length+Packet.checksum_length]
+        msg_S = byte_S[Packet.seq_num_S_length + Packet.seq_num_S_length + Packet.checksum_length :]
         
         #compute the checksum locally
         checksum = hashlib.md5(str(length_S+seq_num_S+msg_S).encode('utf-8'))
         computed_checksum_S = checksum.hexdigest()
         #and check if the same
         return checksum_S != computed_checksum_S
-        
+
+class PacketRdt21(Packet):
+
+    def __init__(self, seq_num, msg_S, ack_nak):
+        Packet.__init__(self, seq_num, msg_S)
+        self.ack_nak = ack_nak
+
+    def is_ack(self):
+        if ack_nak == 0:
+            return True
+        return False
+
+    def is_nak(self):
+        if ack_nak == 1:
+            return True
+        return False
+
 
 class RDT:
     ## latest sequence number used in a packet
@@ -90,11 +106,33 @@ class RDT:
             #if this was the last packet, will return on the next iteration
             
     
-    def rdt_2_1_send(self, msg_S):
-        pass
-        
+    def rdt_2_1_send(self, msg_S, ack_nak):
+        p = PacketRdt21(self.seq_num, msg_S, ack_nak)
+        self.seq_num += 1
+        self.network.udt_send(p.get_byte_S())
+
     def rdt_2_1_receive(self):
-        pass
+        ret_S = None
+        byte_S = self.network.udt_receive()
+        self.byte_buffer += byte_S
+        #keep extracting packets - if reordered, could get more than one
+        while True:
+            #check if we have received enough bytes
+            if(len(self.byte_buffer) < Packet.length_S_length):
+                return ret_S #not enough bytes to read packet length
+            #extract length of packet
+            length = int(self.byte_buffer[:Packet.length_S_length])
+            if len(self.byte_buffer) < length:
+                return ret_S #not enough bytes to read the whole packet
+            #create packet from buffer content and add to return string
+            p = PacketRdt21.from_byte_S(self.byte_buffer[0:length])
+            if(PacketRdt21.is_ack()):
+                pass
+
+            ret_S = p.msg_S if (ret_S is None) else ret_S + p.msg_S
+            #remove the packet bytes from the buffer
+            self.byte_buffer = self.byte_buffer[length:]
+            #if this was the last packet, will return on the next iteration
     
     def rdt_3_0_send(self, msg_S):
         pass
