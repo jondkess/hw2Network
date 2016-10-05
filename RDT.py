@@ -78,7 +78,7 @@ class RDT:
     seq_num = 1
     ## buffer of bytes read from network
     byte_buffer = ''
-    ## state 
+    ## nacks recieved
     nacks = 0
 
     def __init__(self, role_S, server_S, port):
@@ -117,13 +117,12 @@ class RDT:
         p = PacketRDT21(self.seq_num, msg_S, ack_nak)
         self.seq_num += 1
         self.last_packet.append(p)
-        #print(str(self.nacks))
+        print(str(self.nacks))
         self.network.udt_send(p.get_byte_S())
 
     def rdt_2_1_resend(self):
-        if (self.nacks > 0):
+        if (self.nacks > 1):
             self.last_packet.pop
-
         self.network.udt_send(self.last_packet[-1].get_byte_S())
 
     def rdt_2_1_receive(self):
@@ -134,28 +133,47 @@ class RDT:
         while True:
             #check if we have received enough bytes
             if(len(self.byte_buffer) < Packet.length_S_length):
+                sleep(0.5)
                 return ret_S
+            
+            try:
+                check = int(self.byte_buffer[0:Packet.length_S_length+Packet.seq_num_S_length+Packet.type_length])
+            except ValueError:
+                print("CORRUPTION!")
+                self.rdt_2_1_send("", 11)
+                return ret_S
+
             length = int(self.byte_buffer[Packet.type_length:Packet.type_length+Packet.length_S_length])
             if len(self.byte_buffer) < length:
-                #sleep(0.5)
+                sleep(0.5)
                 return ret_S
             #create packet from buffer content and add to return strin
             p = PacketRDT21.from_byte_S(self.byte_buffer[0:length])
             #check the checksum and send nak if corrupt
             if(PacketRDT21.corrupt(self.byte_buffer)):
-                println("got corrupt packet")
-                self.nacks += 1
+                print("got corrupt packet")
                 self.rdt_2_1_send("", 11)
+                ret_S = ""
+                #remove the packet bytes from the buffer
+                self.byte_buffer = self.byte_buffer[length:]
             elif(PacketRDT21.is_nak(p.ack_nak)):   #if nak
                 print("got NAK")
-                self.nacks -= 1
+                self.nacks += 1
                 self.rdt_2_1_resend()
+                ret_S = p.msg_S if (ret_S is None) else ret_S + p.msg_S
+                #remove the packet bytes from the buffer
+                self.byte_buffer = self.byte_buffer[length:]
             elif(PacketRDT21.is_ack(p.ack_nak)):                                  #send ack if not corrupt
                 print("recieved ACK")
                 self.nacks = 0
-            ret_S = p.msg_S if (ret_S is None) else ret_S + p.msg_S
-            #remove the packet bytes from the buffer
-            self.byte_buffer = self.byte_buffer[length:]
+                ret_S = p.msg_S if (ret_S is None) else ret_S + p.msg_S
+                #remove the packet bytes from the buffer
+                self.byte_buffer = self.byte_buffer[length:]
+            else:
+                self.rdt_2_1_send("", 10)
+                ret_S = p.msg_S if (ret_S is None) else ret_S + p.msg_S
+                #remove the packet bytes from the buffer
+                self.byte_buffer = self.byte_buffer[length:]
 
 
     def rdt_3_0_send(self, msg_S):
