@@ -19,10 +19,11 @@ class Packet:
         
     @classmethod
     def from_byte_S(self, byte_S):
-#        if Packet.corrupt(byte_S):
-#            raise RuntimeError('Cannot initialize Packet: byte_S is corrupt')
         #extract the fields
-        seq_num = int(byte_S[Packet.length_S_length + Packet.type_length : Packet.type_length+Packet.length_S_length+Packet.seq_num_S_length])
+        try:
+            seq_num = int(byte_S[Packet.length_S_length + Packet.type_length : Packet.type_length+Packet.length_S_length+Packet.seq_num_S_length])
+        except ValueError:
+            seq_num = byte_S[Packet.length_S_length + Packet.type_length : Packet.type_length+Packet.length_S_length+Packet.seq_num_S_length]
         ack_nak = int(byte_S[:Packet.type_length])    #get whether ack or nak
         msg_S = byte_S[Packet.type_length+Packet.length_S_length+Packet.seq_num_S_length+Packet.checksum_length :]
         return self(seq_num, msg_S, ack_nak)
@@ -117,7 +118,6 @@ class RDT:
         p = PacketRDT21(self.seq_num, msg_S, ack_nak)
         self.seq_num += 1
         self.last_packet.append(p)
-        print(str(self.nacks))
         self.network.udt_send(p.get_byte_S())
 
     def rdt_2_1_resend(self):
@@ -135,45 +135,32 @@ class RDT:
             if(len(self.byte_buffer) < Packet.length_S_length):
                 sleep(0.5)
                 return ret_S
-            
-            try:
-                check = int(self.byte_buffer[0:Packet.length_S_length+Packet.seq_num_S_length+Packet.type_length])
-            except ValueError:
-                print("CORRUPTION!")
-                self.rdt_2_1_send("", 11)
-                return ret_S
-
             length = int(self.byte_buffer[Packet.type_length:Packet.type_length+Packet.length_S_length])
             if len(self.byte_buffer) < length:
-                sleep(0.5)
+                #sleep(0.5)
                 return ret_S
             #create packet from buffer content and add to return strin
             p = PacketRDT21.from_byte_S(self.byte_buffer[0:length])
             #check the checksum and send nak if corrupt
-            if(PacketRDT21.corrupt(self.byte_buffer)):
-                print("got corrupt packet")
+            if (PacketRDT21.corrupt(self.byte_buffer[0:length])):
+                print("corrupt packet")
                 self.rdt_2_1_send("", 11)
-                ret_S = ""
-                #remove the packet bytes from the buffer
-                self.byte_buffer = self.byte_buffer[length:]
+                self.nacks += 1
+                #ret_S = ""
             elif(PacketRDT21.is_nak(p.ack_nak)):   #if nak
                 print("got NAK")
                 self.nacks += 1
                 self.rdt_2_1_resend()
-                ret_S = p.msg_S if (ret_S is None) else ret_S + p.msg_S
-                #remove the packet bytes from the buffer
-                self.byte_buffer = self.byte_buffer[length:]
+                #ret_S = p.msg_S if (ret_S is None) else ret_S + p.msg_S
             elif(PacketRDT21.is_ack(p.ack_nak)):                                  #send ack if not corrupt
                 print("recieved ACK")
                 self.nacks = 0
-                ret_S = p.msg_S if (ret_S is None) else ret_S + p.msg_S
-                #remove the packet bytes from the buffer
-                self.byte_buffer = self.byte_buffer[length:]
+                #ret_S = p.msg_S if (ret_S is None) else ret_S + p.msg_S
             else:
                 self.rdt_2_1_send("", 10)
-                ret_S = p.msg_S if (ret_S is None) else ret_S + p.msg_S
-                #remove the packet bytes from the buffer
-                self.byte_buffer = self.byte_buffer[length:]
+            ret_S = p.msg_S if (ret_S is None) else ret_S + p.msg_S
+            #remove the packet bytes from the buffer
+            self.byte_buffer = self.byte_buffer[length:]
 
 
     def rdt_3_0_send(self, msg_S):
