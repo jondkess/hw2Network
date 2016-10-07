@@ -45,9 +45,9 @@ class Packet:
         #extract the fields\
         type_S = byte_S[:Packet.type_length]
         length_S = byte_S[Packet.type_length:Packet.type_length + Packet.length_S_length]
-        seq_num_S = byte_S[Packet.length_S_length + Packet.type_length : Packet.type_length + Packet.seq_num_S_length+Packet.seq_num_S_length]
+        seq_num_S = byte_S[Packet.type_length + Packet.length_S_length : Packet.type_length + Packet.length_S_length + Packet.seq_num_S_length]
         checksum_S = byte_S[Packet.type_length + Packet.length_S_length+Packet.seq_num_S_length : Packet.type_length + Packet.seq_num_S_length+Packet.length_S_length+Packet.checksum_length]
-        msg_S = byte_S[Packet.type_length + Packet.length_S_length+Packet.seq_num_S_length+Packet.checksum_length :]
+        msg_S = byte_S[Packet.type_length + Packet.length_S_length+Packet.seq_num_S_length+Packet.checksum_length : int(length_S)]
         
         #compute the checksum locally
         checksum = hashlib.md5(str(type_S+length_S+seq_num_S+msg_S).encode('utf-8'))
@@ -121,34 +121,52 @@ class RDT:
 
     def rdt_2_1_receive(self):
         ret_S = None
+        corrupt = chr(88)
         #loc_seq_num = 1
-        byte_S = self.network.udt_receive()
-        self.byte_buffer += byte_S
+        if (self.byte_buffer is ""):
+            byte_S = self.network.udt_receive()
+            self.byte_buffer += byte_S
         #keep extracting packets - if reordered, could get more than one
         while True:
             #check if we have received enough bytes
-            if(len(self.byte_buffer) < Packet.length_S_length):
+            if(len(self.byte_buffer) < Packet.type_length + Packet.length_S_length):
                 return ret_S #not enough bytes to read packet length
             #extract length of packet
+            if corrupt in self.byte_buffer[:Packet.type_length + Packet.length_S_length + Packet.seq_num_S_length]:
+                print("Length was corrupt")
+                self.rdt_2_1_send("", 11)
+                self.byte_buffer = ''
+                return ret_S
             length = int(self.byte_buffer[Packet.type_length:Packet.type_length+Packet.length_S_length])
             if len(self.byte_buffer) < length:
                 return ret_S #not enough bytes to read the whole packet
     #        if (self.seq_num is not loc_seq_num):      #duplicate if wrong sequence number
-     #           return ret_S    #wait for next packet
-      #      loc_seq_num += 1        #next sequence number
+        #           return ret_S    #wait for next packet
+        #      loc_seq_num += 1        #next sequence number
             #create packet from buffer content and add to return string
             p = PacketRDT21.from_byte_S(self.byte_buffer[0:length])
             if(PacketRDT21.is_ack(p.ack_nak)):
                 if(PacketRDT21.corrupt(self.byte_buffer)):
+                    print("Corrupt ack packet: checksum")
                     self.rdt_2_1_resend()        # resend
+                    pass
+                self.byte_buffer = self.byte_buffer[length:]
+                return None
             elif(PacketRDT21.is_nak(p.ack_nak)):   #if nak
+                print("Nak packet")
+                self.byte_buffer = self.byte_buffer[length:]
                 self.rdt_2_1_resend()        # Maybe we should fix
+                return None
             #check the checksum and send nak if corrupt
             elif(PacketRDT21.corrupt(self.byte_buffer)):
-                self.rdt_2_1_send(p.msg_S, 11)
+                print("Corrupt data packet: checksum")
+                self.rdt_2_1_send("", 11)
+                self.byte_buffer = self.byte_buffer[length:]
+                return None
             elif(not PacketRDT21.is_ack(p.ack_nak)): #send ack if not corrupt
-                self.rdt_2_1_send(p.msg_S, 10)
-            ret_S = p.msg_S if (ret_S is None) else ret_S + p.msg_S
+                print("Received data")
+                self.rdt_2_1_send("", 10)
+                ret_S = p.msg_S
             #remove the packet bytes from the buffer
             self.byte_buffer = self.byte_buffer[length:]
             #if this was the last packet, will return on the next iteration
