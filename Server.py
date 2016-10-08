@@ -29,6 +29,7 @@ if __name__ == '__main__':
     parser =  argparse.ArgumentParser(description='Pig Latin conversion server.')
     parser.add_argument('port', help='Port.', type=int)
     args = parser.parse_args()
+    
     timeout = 500 #close connection if no new data within 5 seconds
     time_of_last_data = time.time()
     
