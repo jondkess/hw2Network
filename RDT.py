@@ -115,15 +115,18 @@ class RDT:
     def rdt_2_1_send(self, msg_S, ack_nak = 00, resend = False):
         if ack_nak == 11:
             p = PacketRDT21(self.rec_seq, msg_S, ack_nak)
-            if not (self.send_seq in self.dict):
+            if not (self.send_seq in self.dict) or self.dict.get(self.send_seq).ack_nak == 11:
                 self.dict[self.send_seq] = p
-        else:     
+            self.network.udt_send(p.get_byte_S())
+        elif resend:
+            self.network.udt_send(self.dict.get(self.rec_seq).get_byte_S())
+        else:
             p = PacketRDT21(self.send_seq, msg_S, ack_nak)
-            if not (self.send_seq in self.dict):
+            if not (self.send_seq in self.dict) or self.dict.get(self.send_seq).ack_nak == 11:
                 self.dict[self.send_seq] = p
                 if not resend:
                     self.send_seq += 1
-        self.network.udt_send(p.get_byte_S())
+            self.network.udt_send(p.get_byte_S())
 
     def rdt_2_1_resend(self):
         self.network.udt_send(self.last_packet.get_byte_S())
@@ -160,7 +163,7 @@ class RDT:
                 elif(PacketRDT21.is_nak(p.ack_nak)):   #if nak
                     print("Nak packet")
                     self.byte_buffer = self.byte_buffer[length:]
-                    packet = self.dict.get(self.rec_seq)
+                    packet = self.dict.get(p.seq_num)
                     self.rdt_2_1_send(packet.msg_S, packet.ack_nak, True)        # Maybe we should fix
                     return None
                 #check the checksum and send nak if corrupt
