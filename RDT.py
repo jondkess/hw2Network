@@ -2,12 +2,14 @@ import Network
 import argparse
 from time import sleep
 import hashlib
+import time
 
 
 class Packet:
     ## the number of bytes used to store packet length
     seq_num_S_length = 10
-    length_S_length = 10
+    length_S_length = 22
+    length_length = 10
     type_length = 2
     ## length of md5 checksum in hex
     checksum_length = 32
@@ -21,9 +23,9 @@ class Packet:
     @classmethod
     def from_byte_S(self, byte_S):
         #extract the fields
-        self.seq_num = int(byte_S[Packet.length_S_length + Packet.type_length : Packet.type_length+Packet.length_S_length+Packet.seq_num_S_length])
+        self.seq_num = int(byte_S[Packet.length_length + Packet.type_length : Packet.type_length+Packet.length_length+Packet.seq_num_S_length])
         ack_nak = int(byte_S[:Packet.type_length])    #get whether ack or nak
-        msg_S = byte_S[Packet.type_length+Packet.length_S_length+Packet.seq_num_S_length+Packet.checksum_length :]
+        msg_S = byte_S[Packet.type_length+Packet.length_length+Packet.seq_num_S_length+Packet.checksum_length :]
         return self(self.seq_num, msg_S, ack_nak)
         
         
@@ -31,8 +33,8 @@ class Packet:
         #convert sequence number of a byte field of seq_num_S_length bytes
         type_S = str(self.ack_nak).zfill(self.type_length)
         seq_num_S = str(self.seq_num).zfill(self.seq_num_S_length)
-        #convert length to a byte field of length_S_length bytes
-        length_S = str(self.type_length + self.length_S_length + self.seq_num_S_length + self.checksum_length + len(self.msg_S)).zfill(self.length_S_length)
+        #convert length to a byte field of length_length bytes
+        length_S = str(self.type_length + self.length_length + self.seq_num_S_length + self.checksum_length + len(self.msg_S)).zfill(self.length_length)
         #compute the checksum
         checksum = hashlib.md5((type_S+length_S+seq_num_S+self.msg_S).encode('utf-8'))
         checksum_S = checksum.hexdigest()
@@ -43,10 +45,10 @@ class Packet:
     def corrupt(byte_S):
         #extract the fields\
         type_S = byte_S[:Packet.type_length]
-        length_S = byte_S[Packet.type_length:Packet.type_length + Packet.length_S_length]
-        seq_num_S = byte_S[Packet.type_length + Packet.length_S_length : Packet.type_length + Packet.length_S_length + Packet.seq_num_S_length]
-        checksum_S = byte_S[Packet.type_length + Packet.length_S_length+Packet.seq_num_S_length : Packet.type_length + Packet.seq_num_S_length+Packet.length_S_length+Packet.checksum_length]
-        msg_S = byte_S[Packet.type_length + Packet.length_S_length+Packet.seq_num_S_length+Packet.checksum_length : int(length_S)]
+        length_S = byte_S[Packet.type_length:Packet.type_length + Packet.length_length]
+        seq_num_S = byte_S[Packet.type_length + Packet.length_length : Packet.type_length + Packet.length_length + Packet.seq_num_S_length]
+        checksum_S = byte_S[Packet.type_length + Packet.length_length+Packet.seq_num_S_length : Packet.type_length + Packet.seq_num_S_length+Packet.length_length+Packet.checksum_length]
+        msg_S = byte_S[Packet.type_length + Packet.length_length+Packet.seq_num_S_length+Packet.checksum_length : int(length_S)]
         
         #compute the checksum locally
         checksum = hashlib.md5(str(type_S+length_S+seq_num_S+msg_S).encode('utf-8'))
@@ -79,6 +81,9 @@ class RDT:
     ## buffer of bytes read from network
     byte_buffer = ''
     dict = {}
+    dataPacket = PacketRDT21(0, '', 00)
+    timer = 0
+    waiting = False
     
 
 
@@ -99,10 +104,10 @@ class RDT:
         #keep extracting packets - if reordered, could get more than one
         while True:
             #check if we have received enough bytes
-            if(len(self.byte_buffer) < Packet.length_S_length):
+            if(len(self.byte_buffer) < Packet.length_length):
                 return ret_S #not enough bytes to read packet length
             #extract length of packet
-            length = int(self.byte_buffer[:Packet.length_S_length])
+            length = int(self.byte_buffer[:Packet.length_length])
             if len(self.byte_buffer) < length:
                 return ret_S #not enough bytes to read the whole packet
             #create packet from buffer content and add to return string
@@ -134,11 +139,11 @@ class RDT:
         #keep extracting packets - if reordered, could get more than one
         while True:
             #check if we have received enough bytes
-            if(len(self.byte_buffer) < Packet.type_length + Packet.length_S_length):
+            if(len(self.byte_buffer) < Packet.type_length + Packet.length_length):
                 return ret_S #not enough bytes to read packet length
             #extract length of packet
             try:
-                length = int(self.byte_buffer[Packet.type_length:Packet.type_length + Packet.length_S_length])
+                length = int(self.byte_buffer[Packet.type_length:Packet.type_length + Packet.length_length])
                 if len(self.byte_buffer) < length:
                     return ret_S #not enough bytes to read the whole packet
         #        if (self.seq_num is not loc_seq_num): #duplicate if wrong
@@ -185,14 +190,20 @@ class RDT:
         self.seq_number += 1
         if ack_nak == 11:
             p = PacketRDT21(send_seq_num, msg_S, ack_nak)
-        elif send_seq_num == 0:     
-            p = PacketRDT21(self.seq_number, msg_S, ack_nak)
+        elif send_seq_num == 0:    
+            p = PacketRDT21(self.seq_number, msg_S, ack_nak) 
+            if ack_nak == 00:
+                self.timer = time.time()
+                self.dataPacket = p
+                self.waiting = True
             self.dict[self.seq_number] = p
         elif send_seq_num == 1:
             last = self.dict.keys()[-1]
             p = self.dict[last]
         else:
             p = self.dict[send_seq_num]
+            if p.ack_nak == 00:
+                self.waiting = True
 
         self.network.udt_send(p.get_byte_S())
         #sleep(1)
@@ -203,11 +214,13 @@ class RDT:
         self.byte_buffer += byte_S
         #keep extracting packets - if reordered, could get more than one
         while True:
+            if (self.timer + 1 < time.time() and self.waiting):
+                self.rdt_3_0_send(self.dataPacket.msg_S, self.dataPacket.seq_num, 00)
             #check if we have received enough bytes
-            if(len(self.byte_buffer) < Packet.type_length + Packet.length_S_length):
+            if(len(self.byte_buffer) < Packet.type_length + Packet.length_length):
                 return ret_S #not enough bytes to read packet length
             #extract length of packet
-            length = int(self.byte_buffer[Packet.type_length:Packet.type_length + Packet.length_S_length])
+            length = int(self.byte_buffer[Packet.type_length:Packet.type_length + Packet.length_length])
             if len(self.byte_buffer) < length:
                 #sleep(0.5)
                 return ret_S #not enough bytes to read the whole packet
@@ -216,22 +229,33 @@ class RDT:
 
                 if(PacketRDT21.is_ack(p.ack_nak)):
                     if(PacketRDT21.corrupt(self.byte_buffer)):
-                        self.rdt_3_0_send("", PacketRDT21.seq_num, 11)
+                        self.rdt_3_0_send("", p.seq_num, 11)
+                    self.timer = time.time()
+                    self.waiting = False
                     ret_S = None
                     #self.byte_buffer = self.byte_buffer[length:]
                 elif(PacketRDT21.is_nak(p.ack_nak)):   #if nak
                     #print("resend")
-                    self.rdt_3_0_send("", PacketRDT21.seq_num, 00)
+                    self.rdt_3_0_send("", p.seq_num, 00)
+                    self.timer = time.time()
+                    self.waiting = False
+                    ret_S = None
                 #check the checksum and send nak if corrupt
                 elif(PacketRDT21.corrupt(self.byte_buffer)):
-                    self.rdt_3_0_send("", PacketRDT21.seq_num, 11)
+                    self.rdt_3_0_send("", p.seq_num, 11)
+                    self.time = time.time()
+                    self.waiting = False
                     ret_S = None
                 else:
                     self.rdt_3_0_send("", 0, 10)
                     ret_S = p.msg_S
+                    self.waiting = False
+                    self.time = time.time()
             except:
                 self.rdt_3_0_send("", 1, 11)
-                ret_S
+                ret_S = None
+                self.waiting = False
+                self.time = time.time()
             #remove the packet bytes from the buffer
             self.byte_buffer = self.byte_buffer[length:]
             #if this was the last packet, will return on the next iteration
