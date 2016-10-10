@@ -118,73 +118,73 @@ class RDT:
             #if this was the last packet, will return on the next iteration
     
     def rdt_2_1_send(self, msg_S, ack_nak=00, resend=False):
+        self.seq_number += 1
         if ack_nak == 11:
-            p = PacketRDT21(self.rec_seq, msg_S, ack_nak)
-            if not (self.send_seq in self.dict):
-                self.dict[self.send_seq] = p
-        else:     
-            p = PacketRDT21(self.send_seq, msg_S, ack_nak)
-            if not (self.send_seq in self.dict):
-                self.dict[self.send_seq] = p
-                if not resend:
-                    self.send_seq += 1
+            p = PacketRDT21(send_seq_num, msg_S, ack_nak)
+        elif send_seq_num == 0:    
+            p = PacketRDT21(self.seq_number, msg_S, ack_nak) 
+            if ack_nak == 00:
+                self.timer = time.time()
+                self.dataPacket = p
+                self.waiting = True
+            self.dict[self.seq_number] = p
+        elif send_seq_num == 1:
+            last = self.dict.keys()[-1]
+            p = self.dict[last]
+        else:
+            p = self.dict[send_seq_num]
+            if p.ack_nak == 00:
+                self.timer = time.time()
+                self.dataPacket = p
+                self.waiting = True
+
         self.network.udt_send(p.get_byte_S())
 
     def rdt_2_1_receive(self):
         ret_S = None
-        #loc_seq_num = 1
-        if (self.byte_buffer is ""):
-            byte_S = self.network.udt_receive()
-            self.byte_buffer += byte_S
+        byte_S = self.network.udt_receive()
+        self.byte_buffer += byte_S
         #keep extracting packets - if reordered, could get more than one
         while True:
+            if (self.timer + 1 < time.time() and self.waiting):
+                self.rdt_3_0_send(self.dataPacket.msg_S, self.dataPacket.seq_num, 00)
             #check if we have received enough bytes
             if(len(self.byte_buffer) < Packet.type_length + Packet.length_length):
                 return ret_S #not enough bytes to read packet length
             #extract length of packet
+            length = int(self.byte_buffer[Packet.type_length:Packet.type_length + Packet.length_length])
+            if len(self.byte_buffer) < length:
+                #sleep(0.5)
+                return ret_S #not enough bytes to read the whole packet
             try:
-                length = int(self.byte_buffer[Packet.type_length:Packet.type_length + Packet.length_length])
-                if len(self.byte_buffer) < length:
-                    return ret_S #not enough bytes to read the whole packet
-        #        if (self.seq_num is not loc_seq_num): #duplicate if wrong
-                                        #        sequence number
-            #           return ret_S #wait for next packet
-            #      loc_seq_num += 1 #next sequence number
-                #create packet from buffer content and add to return string
                 p = PacketRDT21.from_byte_S(self.byte_buffer[0:length])
+
                 if(PacketRDT21.is_ack(p.ack_nak)):
                     if(PacketRDT21.corrupt(self.byte_buffer)):
-                        print("Corrupt ack packet: checksum")
-                        self.rdt_2_1_send("", 11)
-                    else:
-                        self.rec_seq += 1
-                    self.byte_buffer = self.byte_buffer[length:]
-                    return None
+                        self.rdt_3_0_send("", p.seq_num, 11)
+                    self.timer = time.time()
+                    ret_S = None
                 elif(PacketRDT21.is_nak(p.ack_nak)):   #if nak
-                    print("Nak packet")
-                    self.byte_buffer = self.byte_buffer[length:]
-                    packet = self.dict.get(self.rec_seq)
-                    self.rdt_2_1_send(packet.msg_S, packet.ack_nak, True)        # Maybe we should fix
-                    return None
+                    self.rdt_3_0_send("", p.seq_num, 00)
+                    self.timer = time.time()
+                    ret_S = None
                 #check the checksum and send nak if corrupt
                 elif(PacketRDT21.corrupt(self.byte_buffer)):
-                    print("Corrupt data packet: checksum")
-                    self.rdt_2_1_send("", 11)
-                    self.byte_buffer = self.byte_buffer[length:]
-                    return None
-                else: #send ack if not corrupt
-                    print("Received data")
-                    self.rdt_2_1_send("", 10)
-                    self.rec_seq += 1
+                    self.rdt_3_0_send("", p.seq_num, 11)
+                    self.time = time.time()
+                    ret_S = None
+                else:
+                    self.rdt_3_0_send("", 0, 10)
                     ret_S = p.msg_S
-                #remove the packet bytes from the buffer
-                self.byte_buffer = self.byte_buffer[length:]
-                #if this was the last packet, will return on the next iteration
+                    self.waiting = False
+                    self.time = time.time()
             except:
-                print("Corrupt packet: exception")
-                self.rdt_2_1_send("", 11)
-                self.byte_buffer = self.byte_buffer[length:]
-                return None
+                self.rdt_3_0_send("", 1, 11)
+                ret_S = None
+                self.time = time.time()
+            #remove the packet bytes from the buffer
+            self.byte_buffer = self.byte_buffer[length:]
+            #if this was the last packet, will return on the next iteration
 
     def rdt_3_0_send(self, msg_S, send_seq_num=0, ack_nak=00):
         self.seq_number += 1
@@ -203,10 +203,11 @@ class RDT:
         else:
             p = self.dict[send_seq_num]
             if p.ack_nak == 00:
+                self.timer = time.time()
+                self.dataPacket = p
                 self.waiting = True
 
         self.network.udt_send(p.get_byte_S())
-        #sleep(1)
         
     def rdt_3_0_receive(self):
         ret_S = None
@@ -231,20 +232,15 @@ class RDT:
                     if(PacketRDT21.corrupt(self.byte_buffer)):
                         self.rdt_3_0_send("", p.seq_num, 11)
                     self.timer = time.time()
-                    self.waiting = False
                     ret_S = None
-                    #self.byte_buffer = self.byte_buffer[length:]
                 elif(PacketRDT21.is_nak(p.ack_nak)):   #if nak
-                    #print("resend")
                     self.rdt_3_0_send("", p.seq_num, 00)
                     self.timer = time.time()
-                    self.waiting = False
                     ret_S = None
                 #check the checksum and send nak if corrupt
                 elif(PacketRDT21.corrupt(self.byte_buffer)):
                     self.rdt_3_0_send("", p.seq_num, 11)
                     self.time = time.time()
-                    self.waiting = False
                     ret_S = None
                 else:
                     self.rdt_3_0_send("", 0, 10)
@@ -254,7 +250,6 @@ class RDT:
             except:
                 self.rdt_3_0_send("", 1, 11)
                 ret_S = None
-                self.waiting = False
                 self.time = time.time()
             #remove the packet bytes from the buffer
             self.byte_buffer = self.byte_buffer[length:]
